@@ -9,7 +9,7 @@ It introduces immersive G-force head movement, aerodynamic turbulence shake, son
 
 ---
 
-## ✨ Features
+##  Features
 
 ### 1. Procedural Cockpit Physics & Head Movement
 * **G-Force Translation & Rotation**: Your pilot's view moves dynamically under positive/negative Gs, lateral slips, and pitch/roll rates without clipping outside the cockpit.
@@ -30,7 +30,7 @@ It introduces immersive G-force head movement, aerodynamic turbulence shake, son
 
 ---
 
-## 🎮 Keybindings & Controls
+##  Keybindings & Controls
 
 | Key | Action | Description |
 |---|---|---|
@@ -42,7 +42,7 @@ It introduces immersive G-force head movement, aerodynamic turbulence shake, son
 
 ---
 
-## 📥 Installation
+##  Installation
 
 1. Install **[BepInEx 5](https://github.com/BepInEx/BepInEx/releases)** into your Nuclear Option root folder.
 2. Download `NCMod.NuclearOptionTrainer.dll` from the latest release.
@@ -51,7 +51,7 @@ It introduces immersive G-force head movement, aerodynamic turbulence shake, son
 
 ---
 
-## ⚙️ Configuration (`ua.ncmod.nuclearoption.trainer.cfg`)
+##  Configuration (`ua.ncmod.nuclearoption.trainer.cfg`)
 
 | Category | Setting | Default | Description |
 |---|---|---|---|
@@ -66,7 +66,7 @@ It introduces immersive G-force head movement, aerodynamic turbulence shake, son
 
 ---
 
-## 🛠️ Building from Source
+##  Building from Source
 
 ```powershell
 # Build mod with .NET SDK
