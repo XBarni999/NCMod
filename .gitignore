@@ -1,0 +1,45 @@
+# Decompiled and game binaries
+decompiled game/
+*.dll
+*.pdb
+*.bak
+
+# Build outputs
+bin/
+obj/
+**/bin/
+**/obj/
+
+# Unity temporary files and caches
+Library/
+**/Library/
+Logs/
+**/Logs/
+UserSettings/
+**/UserSettings/
+Temp/
+**/Temp/
+Build/
+**/Build/
+Builds/
+**/Builds/
+MemoryCaptures/
+**/MemoryCaptures/
+Recordings/
+**/Recordings/
+*.pid
+**/*.pid
+
+# Logs and scratch text files
+*.log
+**/*.log
+**/tools/*.txt
+**/tools/Inspect/*.txt
+
+# OS and IDE
+.vs/
+.idea/
+*.user
+*.userosv
+*.suo
+Thumbs.db
