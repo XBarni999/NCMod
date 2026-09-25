@@ -82,7 +82,5 @@ dotnet build NCMod.csproj -c Release
 
 Created by **XBarni999**.  
 Developed for **Nuclear Option** by Shockfront Studios.
-
-[Torpedo Balanced](torpedo-main/README.md) is a separate modification of the
 [original Torpedo mod by SonPamungkas](https://github.com/SonPamungkas/torpedo).
 Its original code and four torpedo variants are credited to SonPamungkas.
