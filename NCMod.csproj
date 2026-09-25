@@ -10,6 +10,8 @@
 
   <ItemGroup>
     <Compile Remove="torpedo-main\**\*.cs" />
+    <Compile Remove="SensorSuite.cs" />
+    <Compile Remove="scratch_targetcam.cs" />
     <Reference Include="netstandard">
       <HintPath>F:\Games\Nuclear.Option.v0.34.1\NuclearOption_Data\Managed\netstandard.dll</HintPath>
       <Private>false</Private>

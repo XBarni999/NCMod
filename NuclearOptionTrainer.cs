@@ -18,7 +18,7 @@ namespace NCMod
     {
         public const string PluginGuid = "ua.ncmod.nuclearoption.trainer";
         public const string PluginName = "NCMod Trainer and Cockpit Physics";
-        public const string PluginVersion = "1.1.2";
+        public const string PluginVersion = "1.1.4";
 
         private const int WindowId = 340101;
         private const float FeedLifetime = 5.0f;
@@ -43,6 +43,7 @@ namespace NCMod
         private bool _menuVisible;
         private HudHideMode _hudHideMode;
         private float _nextCanvasSweep;
+        private float _nextAmmoSweep;
         private readonly Dictionary<int, CanvasRestoreState> _hiddenCanvases =
             new Dictionary<int, CanvasRestoreState>();
         private readonly Dictionary<int, GameObjectRestoreState> _hiddenMarkerObjects =
@@ -157,6 +158,12 @@ namespace NCMod
             {
                 ApplyHudHideMode();
                 _nextCanvasSweep = Time.unscaledTime + 0.35f;
+            }
+
+            if (UnlimitedAmmo && Time.unscaledTime >= _nextAmmoSweep)
+            {
+                UnlimitedMountedAmmo.RefillLocalAircraft();
+                _nextAmmoSweep = Time.unscaledTime + 0.15f;
             }
 
             RemoveExpiredFeedEntries();
@@ -1000,18 +1007,157 @@ namespace NCMod
         }
     }
 
+    // Gun.Fire only starts the trigger. The actual rounds are consumed later in
+    // Gun.FixedUpdate, so restoring Weapon.ammo after Fire cannot keep a gun loaded.
+    internal static class UnlimitedGunAmmo
+    {
+        private static readonly FieldInfo BulletsLoaded = AccessTools.Field(typeof(Gun), "bulletsLoaded");
+        private static readonly FieldInfo Magazines = AccessTools.Field(typeof(Gun), "magazines");
+        private static readonly FieldInfo MagazineCapacity = AccessTools.Field(typeof(Gun), "magazineCapacity");
+        private static readonly FieldInfo ReloadTimer = AccessTools.Field(typeof(Gun), "timeUntilReload");
+        private static readonly FieldInfo Station = AccessTools.Field(typeof(Weapon), "weaponStation");
+
+        internal static void Refill(Gun gun, WeaponStation station = null)
+        {
+            if (!NuclearOptionTrainer.UnlimitedAmmo ||
+                !UnlimitedAmmoWeaponPatch.IsLocalWeapon(gun) ||
+                BulletsLoaded == null || Magazines == null || MagazineCapacity == null)
+            {
+                return;
+            }
+
+            int capacity = (int)MagazineCapacity.GetValue(gun);
+            if (capacity <= 0) return;
+            int full = gun.GetFullAmmo();
+            if (full <= 0) return;
+
+            bool changed = gun.ammo != full || (int)BulletsLoaded.GetValue(gun) != capacity;
+            if (!changed) return;
+
+            BulletsLoaded.SetValue(gun, capacity);
+            Magazines.SetValue(gun, Math.Max(0, full / capacity - 1));
+            gun.ammo = full;
+            if (ReloadTimer != null) ReloadTimer.SetValue(gun, 0f);
+            station = station ?? (Station == null ? null : Station.GetValue(gun) as WeaponStation);
+            if (station != null)
+            {
+                station.AccountAmmo();
+                station.Updated();
+            }
+        }
+    }
+
+    internal static class UnlimitedMountedAmmo
+    {
+        private static readonly FieldInfo WeaponIndex = AccessTools.Field(typeof(WeaponStation), "weaponIndex");
+
+        internal static void RefillLocalAircraft()
+        {
+            Aircraft aircraft;
+            if (!GameManager.GetLocalAircraft(out aircraft) || aircraft == null || aircraft.weaponStations == null)
+                return;
+
+            foreach (WeaponStation station in aircraft.weaponStations)
+            {
+                if (station == null || station.Weapons == null || station.Weapons.Count == 0) continue;
+
+                Weapon first = station.Weapons[0];
+                if (first is MissileLauncher)
+                {
+                    bool changed = false;
+                    foreach (Weapon weapon in station.Weapons)
+                    {
+                        if (weapon == null || !weapon.IsAttached()) continue;
+                        int full = weapon.GetFullAmmo();
+                        if (full <= 0 || weapon.ammo == full) continue;
+                        weapon.ammo = full;
+                        changed = true;
+                    }
+                    if (changed)
+                    {
+                        station.AccountAmmo();
+                        station.Updated();
+                    }
+                    continue;
+                }
+
+                if (!(first is MountedMissile) && !(first is MountedCargo)) continue;
+                bool spent = false;
+                bool ready = true;
+                foreach (Weapon weapon in station.Weapons)
+                {
+                    if (weapon == null || !weapon.IsAttached()) { ready = false; break; }
+                    if (weapon.GetAmmoLoaded() > 0) continue;
+                    spent = true;
+                    // The launched mount remains active until RailLaunch finishes.
+                    if (weapon.gameObject.activeSelf) { ready = false; break; }
+                }
+                if (!spent || !ready) continue;
+
+                station.Rearm(station.Weapons.Count);
+                // Cargo's Rearm does not reset LaunchMount's index.
+                if (first is MountedCargo && WeaponIndex != null)
+                {
+                    WeaponIndex.SetValue(station, 0);
+                    foreach (Weapon weapon in station.Weapons)
+                        if (weapon != null && weapon.GetAmmoLoaded() > 0) weapon.ammo = 1;
+                    station.AccountAmmo();
+                    station.Updated();
+                }
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(Gun), "Fire")]
+    internal static class UnlimitedGunFirePatch
+    {
+        private static void Prefix(Gun __instance, WeaponStation weaponStation)
+        {
+            UnlimitedGunAmmo.Refill(__instance, weaponStation);
+        }
+    }
+
+    [HarmonyPatch(typeof(Gun), "FixedUpdate")]
+    internal static class UnlimitedGunFixedUpdatePatch
+    {
+        private static void Postfix(Gun __instance)
+        {
+            UnlimitedGunAmmo.Refill(__instance);
+        }
+    }
+
     [HarmonyPatch(typeof(Aircraft), "UseFuel")]
     internal static class UnlimitedFuelPatch
     {
+        internal static bool IsControlledAircraft(Aircraft aircraft)
+        {
+            return aircraft != null && aircraft.LocalSim &&
+                   ((aircraft.Player != null && aircraft.Player.IsLocalPlayer) ||
+                    GameManager.IsLocalAircraft(aircraft));
+        }
+
         private static bool Prefix(Aircraft __instance, ref bool __result)
         {
-            if (!NuclearOptionTrainer.UnlimitedFuel || __instance == null || !GameManager.IsLocalAircraft(__instance))
+            if (!NuclearOptionTrainer.UnlimitedFuel || !IsControlledAircraft(__instance))
             {
                 return true;
             }
 
             __result = true;
             return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(FuelTank), "UseFuel")]
+    internal static class UnlimitedFuelTankPatch
+    {
+        private static readonly FieldInfo AircraftField = AccessTools.Field(typeof(FuelTank), "aircraft");
+
+        private static bool Prefix(FuelTank __instance, float rate)
+        {
+            if (!NuclearOptionTrainer.UnlimitedFuel || rate <= 0f || __instance == null || AircraftField == null)
+                return true;
+            return !UnlimitedFuelPatch.IsControlledAircraft(AircraftField.GetValue(__instance) as Aircraft);
         }
     }
 

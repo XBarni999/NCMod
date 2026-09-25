@@ -1,6 +1,6 @@
 # NCMod - Nuclear Option Trainer & Cockpit Physics
 
-Latest source update: **1.1.3**. See [CHANGELOG.md](CHANGELOG.md) and [Releases](https://github.com/XBarni999/NCMod/releases).
+Latest source update: **1.1.4**. See [CHANGELOG.md](CHANGELOG.md) and [Releases](https://github.com/XBarni999/NCMod/releases).
 
 [![Game Version](https://img.shields.io/badge/Nuclear%20Option-v0.34.x-blue?style=flat-square)](https://store.steampowered.com/app/2168680/Nuclear_Option/)
 [![BepInEx](https://img.shields.io/badge/BepInEx-5.x-green?style=flat-square)](https://github.com/BepInEx/BepInEx)
@@ -82,5 +82,3 @@ dotnet build NCMod.csproj -c Release
 
 Created by **XBarni999**.  
 Developed for **Nuclear Option** by Shockfront Studios.
-[original Torpedo mod by SonPamungkas](https://github.com/SonPamungkas/torpedo).
-Its original code and four torpedo variants are credited to SonPamungkas.
