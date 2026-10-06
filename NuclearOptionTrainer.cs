@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -18,9 +18,10 @@ namespace NCMod
     {
         public const string PluginGuid = "ua.ncmod.nuclearoption.trainer";
         public const string PluginName = "NCMod Trainer and Cockpit Physics";
-        public const string PluginVersion = "1.1.2";
+        public const string PluginVersion = "1.2.0";
 
         private const int WindowId = 340101;
+        private const CursorFlags MenuCursorFlag = (CursorFlags)(1 << 30);
         private const float FeedLifetime = 5.0f;
         private const int MaxFeedEntries = 8;
 
@@ -36,8 +37,16 @@ namespace NCMod
         internal static bool HideTargetMarkers;
 
         private Harmony _harmony;
-        private Rect _windowRect = new Rect(24f, 80f, 330f, 0f);
+        private Rect _windowRect = new Rect(24f, 80f, 420f, 0f);
         private int _rankTarget;
+        private int _menuTab;
+        private Vector2 _menuScroll;
+        private ConfigEntry<int> _spawnAltitude;
+        private int _lastSpawnAircraft;
+        private float _spawnReadyAt;
+        private Texture2D _panelTexture;
+        private static readonly string[] MenuTabs = { "Flight", "Camera / HUD", "Funds / Rank" };
+        private static readonly int[] SpawnHeights = { 500, 1000, 2000, 5000 };
         private string _status = "Ready. Single-player or host authority required for funds/rank.";
         private float _statusUntil;
         private bool _menuVisible;
@@ -74,6 +83,8 @@ namespace NCMod
         private void Awake()
         {
             Instance = this;
+            _spawnAltitude = Config.Bind("AirStart", "Altitude", 0,
+                "Automatic air start after entering a new aircraft: 0 off, or 500/1000/2000/5000 metres above local terrain.");
             LogSource = Logger;
 
             _menuKey = Config.Bind("Keybinds", "MenuToggleKey", new KeyboardShortcut(KeyCode.Insert),
@@ -126,7 +137,9 @@ namespace NCMod
 
         private void OnDestroy()
         {
+            CursorManager.SetFlag(MenuCursorFlag, false);
             SetHudHideMode(HudHideMode.Visible);
+            if (_panelTexture != null) Destroy(_panelTexture);
             if (_harmony != null)
             {
                 _harmony.UnpatchSelf();
@@ -141,6 +154,7 @@ namespace NCMod
             if (_menuKey.Value.IsDown() || _alternateMenuKey.Value.IsDown())
             {
                 _menuVisible = !_menuVisible;
+                CursorManager.SetFlag(MenuCursorFlag, _menuVisible);
             }
 
             if (_interfaceToggleKey.Value.IsDown())
@@ -159,6 +173,21 @@ namespace NCMod
                 _nextCanvasSweep = Time.unscaledTime + 0.35f;
             }
 
+            Aircraft current;
+            if (GameManager.GetLocalAircraft(out current) && current != null)
+            {
+                if (_lastSpawnAircraft != current.GetInstanceID())
+                {
+                    _lastSpawnAircraft = current.GetInstanceID();
+                    _spawnReadyAt = Time.unscaledTime + 1f;
+                }
+                if (_spawnReadyAt > 0f && Time.unscaledTime >= _spawnReadyAt)
+                {
+                    _spawnReadyAt = 0f;
+                    if (Array.IndexOf(SpawnHeights, _spawnAltitude.Value) >= 0) AirStart(_spawnAltitude.Value);
+                }
+            }
+            else _lastSpawnAircraft = 0;
             RemoveExpiredFeedEntries();
         }
 
@@ -169,7 +198,7 @@ namespace NCMod
             if (_menuVisible)
             {
                 _windowRect = GUILayout.Window(WindowId, _windowRect, DrawWindow,
-                    "NCMod • Nuclear Option 0.34", _windowStyle, GUILayout.Width(330f));
+                    "NCMod • Nuclear Option 0.34", _windowStyle, GUILayout.Width(420f));
                 _windowRect.x = Mathf.Clamp(_windowRect.x, 0f, Mathf.Max(0f, Screen.width - _windowRect.width));
                 _windowRect.y = Mathf.Clamp(_windowRect.y, 0f, Mathf.Max(0f, Screen.height - 40f));
             }
@@ -182,74 +211,100 @@ namespace NCMod
 
         private void DrawWindow(int id)
         {
-            GUILayout.Space(2f);
-            GUILayout.Label("ECONOMY", _headerStyle);
+            GUILayout.Label("N C M O D   /   " + PluginVersion, _headerStyle);
+            _menuTab = GUILayout.Toolbar(_menuTab, MenuTabs, GUILayout.Height(30f));
+            _menuScroll = GUILayout.BeginScrollView(_menuScroll, GUILayout.MaxHeight(Mathf.Max(160f, Screen.height - 180f)));
+            if (_menuTab == 2)
+            {
+                GUILayout.Space(8f);
+                GUILayout.Label("ECONOMY", _headerStyle);
 
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("+10M", GUILayout.Height(26f)))
-            {
-                AddTeamFunds(10f);
-            }
-            if (GUILayout.Button("+100M", GUILayout.Height(26f)))
-            {
-                AddTeamFunds(100f);
-            }
-            if (GUILayout.Button("+500M", GUILayout.Height(26f)))
-            {
-                AddTeamFunds(500f);
-            }
-            GUILayout.EndHorizontal();
-            GUILayout.Label("Adds millions to your personal account balance.", _smallStyle);
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button("+10M", GUILayout.Height(26f)))
+                {
+                    AddTeamFunds(10f);
+                }
+                if (GUILayout.Button("+100M", GUILayout.Height(26f)))
+                {
+                    AddTeamFunds(100f);
+                }
+                if (GUILayout.Button("+500M", GUILayout.Height(26f)))
+                {
+                    AddTeamFunds(500f);
+                }
+                GUILayout.EndHorizontal();
+                GUILayout.Label("Adds millions to your personal account balance.", _smallStyle);
 
-            GUILayout.Space(5f);
-            GUILayout.Label("PROGRESSION", _headerStyle);
-            Player player;
-            int maxRank = GetMaximumRank(TryGetLocalPlayer(out player) ? player : null);
-            _rankTarget = Mathf.Clamp(_rankTarget, 0, maxRank);
-            GUILayout.Label("Rank: " + _rankTarget + " / " + maxRank, _smallStyle);
-            _rankTarget = Mathf.RoundToInt(GUILayout.HorizontalSlider(_rankTarget, 0f, maxRank));
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Apply rank", GUILayout.Height(24f)))
-            {
-                SetRank(_rankTarget);
-            }
-            if (GUILayout.Button("Max rank", GUILayout.Height(24f)))
-            {
-                _rankTarget = maxRank;
-                SetRank(maxRank);
-            }
-            GUILayout.EndHorizontal();
+                GUILayout.Space(5f);
+                GUILayout.Label("PROGRESSION", _headerStyle);
+                Player player;
+                int maxRank = GetMaximumRank(TryGetLocalPlayer(out player) ? player : null);
+                _rankTarget = Mathf.Clamp(_rankTarget, 0, maxRank);
+                GUILayout.Label("Rank: " + _rankTarget + " / " + maxRank, _smallStyle);
+                _rankTarget = Mathf.RoundToInt(GUILayout.HorizontalSlider(_rankTarget, 0f, maxRank));
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button("Apply rank", GUILayout.Height(24f)))
+                {
+                    SetRank(_rankTarget);
+                }
+                if (GUILayout.Button("Max rank", GUILayout.Height(24f)))
+                {
+                    _rankTarget = maxRank;
+                    SetRank(maxRank);
+                }
+                GUILayout.EndHorizontal();
 
-            GUILayout.Space(5f);
-            GUILayout.Label("FLIGHT", _headerStyle);
-            SetToggle(ref UnlimitedAmmo, _unlimitedAmmoConfig, "Unlimited ammo");
-            SetToggle(ref UnlimitedFuel, _unlimitedFuelConfig, "Unlimited fuel");
-            SetToggle(ref CockpitPhysics, _cockpitPhysicsConfig, "Dynamic cockpit head physics");
-            SetToggle(ref DamageFeed, _damageFeedConfig, "Combat / damage feed");
-
-            bool cleanScreen = GUILayout.Toggle(_hudHideMode == HudHideMode.CleanScreen,
-                "Clean screen (keep cockpit displays)  [" + _interfaceToggleKey.Value + "]");
-            if (cleanScreen != (_hudHideMode == HudHideMode.CleanScreen))
-            {
-                SetHudHideMode(cleanScreen ? HudHideMode.CleanScreen : HudHideMode.Visible);
+                GUILayout.Space(5f);
             }
-            bool markersOnly = GUILayout.Toggle(_hudHideMode == HudHideMode.TargetMarkersOnly,
-                "Hide target markers only  [" + _markersToggleKey.Value + "]");
-            if (markersOnly != (_hudHideMode == HudHideMode.TargetMarkersOnly))
+            if (_menuTab == 0)
             {
-                SetHudHideMode(markersOnly ? HudHideMode.TargetMarkersOnly : HudHideMode.Visible);
+                GUILayout.Label("AIR START", _headerStyle);
+                GUILayout.Label("Height above local terrain · speed matched to your airframe", _smallStyle);
+                GUILayout.BeginHorizontal();
+                foreach (int height in SpawnHeights)
+                    if (GUILayout.Button(height + " m", GUILayout.Height(30f))) AirStart(height);
+                GUILayout.EndHorizontal();
+                GUILayout.Label("On next aircraft spawn: " + (_spawnAltitude.Value == 0 ? "Off" : _spawnAltitude.Value + " m"), _smallStyle);
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button("Off")) _spawnAltitude.Value = 0;
+                foreach (int height in SpawnHeights)
+                    if (GUILayout.Button(height.ToString())) _spawnAltitude.Value = height;
+                GUILayout.EndHorizontal();
+                GUILayout.Space(10f);
+                GUILayout.Label("FLIGHT", _headerStyle);
+                SetToggle(ref UnlimitedAmmo, _unlimitedAmmoConfig, "Unlimited ammo");
+                SetToggle(ref UnlimitedFuel, _unlimitedFuelConfig, "Unlimited fuel");
             }
-
-            GUILayout.Space(4f);
-            GUILayout.Label("Camera intensity: " + PositionStrength.Value.ToString("0.00", CultureInfo.InvariantCulture), _smallStyle);
-            float cameraIntensity = GUILayout.HorizontalSlider(PositionStrength.Value, 0.25f, 2.0f);
-            if (Math.Abs(cameraIntensity - PositionStrength.Value) > 0.001f)
+            if (_menuTab == 1)
             {
-                PositionStrength.Value = cameraIntensity;
-                RotationStrength.Value = cameraIntensity;
-            }
+                SetToggle(ref CockpitPhysics, _cockpitPhysicsConfig, "Dynamic cockpit head physics");
+                SetToggle(ref DamageFeed, _damageFeedConfig, "Combat / damage feed");
 
-            GUILayout.Space(5f);
+                bool cleanScreen = GUILayout.Toggle(_hudHideMode == HudHideMode.CleanScreen,
+                    "Clean screen (keep cockpit displays)  [" + _interfaceToggleKey.Value + "]");
+                if (cleanScreen != (_hudHideMode == HudHideMode.CleanScreen))
+                {
+                    SetHudHideMode(cleanScreen ? HudHideMode.CleanScreen : HudHideMode.Visible);
+                }
+                bool markersOnly = GUILayout.Toggle(_hudHideMode == HudHideMode.TargetMarkersOnly,
+                    "Hide target markers only  [" + _markersToggleKey.Value + "]");
+                if (markersOnly != (_hudHideMode == HudHideMode.TargetMarkersOnly))
+                {
+                    SetHudHideMode(markersOnly ? HudHideMode.TargetMarkersOnly : HudHideMode.Visible);
+                }
+
+                GUILayout.Space(4f);
+                GUILayout.Label("Camera intensity: " + PositionStrength.Value.ToString("0.00", CultureInfo.InvariantCulture), _smallStyle);
+                float cameraIntensity = GUILayout.HorizontalSlider(PositionStrength.Value, 0.25f, 2.0f);
+                if (Math.Abs(cameraIntensity - PositionStrength.Value) > 0.001f)
+                {
+                    PositionStrength.Value = cameraIntensity;
+                    RotationStrength.Value = cameraIntensity;
+                }
+
+            }
+            GUILayout.EndScrollView();
+            GUILayout.Space(8f);
             if (Time.unscaledTime < _statusUntil)
             {
                 GUILayout.Label(_status, _smallStyle);
@@ -262,6 +317,56 @@ namespace NCMod
             }
 
             GUI.DragWindow(new Rect(0f, 0f, 10000f, 24f));
+        }
+
+        private void AirStart(int altitude)
+        {
+            Player player;
+            if (!TryGetAuthoritativePlayer(out player)) return;
+            Aircraft aircraft;
+            if (!GameManager.GetLocalAircraft(out aircraft) || aircraft == null || aircraft.rb == null || !aircraft.LocalSim || aircraft.disabled || aircraft.definition == null)
+            { ShowStatus("Enter your aircraft first."); return; }
+            Vector3 forward = Vector3.ProjectOnPlane(aircraft.transform.forward, Vector3.up).normalized;
+            if (forward.sqrMagnitude < 0.5f) forward = Vector3.forward;
+            Vector3 target = aircraft.transform.position;
+            RaycastHit hit;
+            float terrainY = Datum.origin.position.y;
+            if (Physics.Raycast(target + Vector3.up * 20000f, Vector3.down, out hit, 40000f, (int)PhysicsLayers.StaticsMask | (int)PhysicsLayers.ShipsMask))
+                terrainY = Mathf.Max(terrainY, hit.point.y);
+            target.y = terrainY + altitude;
+            bool rotor = aircraft.GetComponentInChildren<RotorShaft>(true) != null;
+            bool prop = aircraft.GetComponentInChildren<ConstantSpeedProp>(true) != null || aircraft.GetComponentInChildren<PropFan>(true) != null;
+            AircraftParameters parameters = aircraft.definition.aircraftParameters;
+            float speed = rotor ? 40f : prop ? 100f : 180f;
+            if (!rotor && parameters != null)
+                speed = Mathf.Max(speed, Mathf.Max(parameters.takeoffSpeed, parameters.approachSpeed) * 1.35f);
+            if (parameters != null && parameters.maxSpeed > 1f)
+                speed = Mathf.Min(speed, parameters.maxSpeed * 0.8f);
+            Quaternion rotation = Quaternion.LookRotation(forward, Vector3.up);
+            Quaternion delta = rotation * Quaternion.Inverse(aircraft.transform.rotation);
+            Rigidbody[] bodies = aircraft.GetComponentsInChildren<Rigidbody>(true);
+            Vector3[] positions = new Vector3[bodies.Length];
+            Quaternion[] rotations = new Quaternion[bodies.Length];
+            for (int i = 0; i < bodies.Length; i++)
+            {
+                positions[i] = target + delta * (bodies[i].position - aircraft.transform.position);
+                rotations[i] = delta * bodies[i].rotation;
+            }
+            aircraft.transform.SetPositionAndRotation(target, rotation);
+            for (int i = 0; i < bodies.Length; i++)
+            {
+                bodies[i].position = positions[i]; bodies[i].rotation = rotations[i];
+                bodies[i].velocity = forward * speed; bodies[i].angularVelocity = Vector3.zero;
+            }
+            aircraft.GetInputs().throttle = rotor ? 0.65f : 0.75f;
+            aircraft.NetworkIgnition = true;
+            aircraft.GetInputs().brake = 0f;
+            aircraft.SetGear(false);
+            aircraft.velocityPrev = Vector3.zero;
+            Physics.SyncTransforms();
+            aircraft.CheckRadarAlt();
+            CockpitHeadMotion.Reset();
+            ShowStatus("Air start: " + altitude + " m AGL / " + (speed * 3.6f).ToString("0") + " km/h.");
         }
 
         private void SetToggle(ref bool runtimeValue, ConfigEntry<bool> config, string label)
@@ -335,7 +440,7 @@ namespace NCMod
 
             if (!player.IsServer)
             {
-                ShowStatus("Funds/rank are server-authoritative: use single-player or host the session.");
+                ShowStatus("Trainer actions are server-authoritative: use single-player or host the session.");
                 return false;
             }
 
@@ -726,10 +831,15 @@ namespace NCMod
                 return;
             }
 
+            _panelTexture = new Texture2D(1, 1);
+            _panelTexture.SetPixel(0, 0, new Color(0.055f, 0.075f, 0.10f, 0.97f));
+            _panelTexture.Apply();
             _windowStyle = new GUIStyle(GUI.skin.window)
             {
-                padding = new RectOffset(10, 10, 24, 10),
-                fontSize = 13
+                padding = new RectOffset(16, 16, 28, 16),
+                normal = { background = _panelTexture, textColor = Color.white },
+                onNormal = { background = _panelTexture },
+                fontSize = 14
             };
             _headerStyle = new GUIStyle(GUI.skin.label)
             {
@@ -1018,6 +1128,10 @@ namespace NCMod
     [HarmonyPatch(typeof(CameraCockpitState), "UpdateState")]
     internal static class CockpitCameraPatch
     {
+        private static void Prefix(CameraCockpitState __instance, CameraStateManager cam)
+        {
+            CockpitHeadMotion.RemoveApplied(cam);
+        }
         private static void Postfix(CameraCockpitState __instance, CameraStateManager cam)
         {
             if (!NuclearOptionTrainer.CockpitPhysics)
@@ -1030,8 +1144,42 @@ namespace NCMod
         }
     }
 
+    [HarmonyPatch(typeof(CameraCockpitState), "LeaveState")]
+    internal static class CockpitExitPatch
+    {
+        private static void Prefix(CameraStateManager cam)
+        { CockpitHeadMotion.RemoveApplied(cam); CockpitHeadMotion.Reset(); }
+    }
+
+    [HarmonyPatch(typeof(CameraCockpitState), "FixedUpdateState")]
+    internal static class CockpitInertiaPatch
+    {
+        private static void Prefix(ref float ___lowFreqShake, out float __state)
+        { __state = ___lowFreqShake; }
+        private static void Postfix(CameraStateManager cam, float __state,
+            ref float ___lowFreqShake, ref Vector3 ___camRelativePos, ref Vector3 ___camRelativeVel, ref float ___antiSlump)
+        {
+            if (!NuclearOptionTrainer.CockpitPhysics || cam == null || !GameManager.GetLocalAircraft(out Aircraft aircraft) || cam.followingUnit != aircraft) return;
+            ___camRelativePos = Vector3.zero; ___camRelativeVel = Vector3.zero; ___antiSlump = 0f;
+            ___lowFreqShake = Mathf.Lerp(__state, 0f, 5f * Time.fixedDeltaTime);
+            cam.cockpitRattle.volume = ___lowFreqShake;
+        }
+    }
+
     internal static class CockpitHeadMotion
     {
+        private static Quaternion _appliedRotation = Quaternion.identity;
+        private static Vector3 _appliedPosition;
+        private static Transform _appliedTransform;
+        internal static void RemoveApplied(CameraStateManager cam)
+        {
+            if (cam != null && _appliedTransform == cam.transform)
+            {
+                cam.transform.localRotation *= Quaternion.Inverse(_appliedRotation);
+                cam.transform.localPosition -= _appliedPosition;
+            }
+            _appliedRotation = Quaternion.identity; _appliedPosition = Vector3.zero; _appliedTransform = null;
+        }
         private static readonly FieldInfo AircraftField = AccessTools.Field(typeof(CameraCockpitState), "aircraft");
 
         private enum AirframeMotionClass
@@ -1044,6 +1192,9 @@ namespace NCMod
 
         private static int _aircraftId;
         private static Vector3 _previousVelocity;
+        private static float _lastPhysicsTime;
+        private static Vector3 _sampledG = Vector3.up;
+        private static float _sampledImpulse;
         private static Vector3 _previousAcceleration;
         private static Vector3 _positionOffset;
         private static Vector3 _positionVelocity;
@@ -1054,12 +1205,11 @@ namespace NCMod
         private static float _sonicKick;
         private static float _lastSonicCrossing = -100f;
         private static AirframeMotionClass _motionClass;
-        private static IEngine[] _engines = new IEngine[0];
-        private static bool _initialized;
+                private static bool _initialized;
 
         internal static void Apply(CameraCockpitState state, CameraStateManager cam)
         {
-            if (state == null || cam == null || AircraftField == null || NuclearOptionTrainer.Instance == null)
+            if (CameraStateManager.cameraMode != CameraMode.cockpit || state == null || cam == null || AircraftField == null || NuclearOptionTrainer.Instance == null)
             {
                 Reset();
                 return;
@@ -1087,6 +1237,9 @@ namespace NCMod
             {
                 _aircraftId = id;
                 _previousVelocity = body.velocity;
+                _lastPhysicsTime = Time.fixedTime;
+                _sampledG = Vector3.up;
+                _sampledImpulse = 0f;
                 _previousAcceleration = aircraftTransform.InverseTransformDirection(-Physics.gravity) / 9.80665f;
                 _positionOffset = Vector3.zero;
                 _positionVelocity = Vector3.zero;
@@ -1094,27 +1247,35 @@ namespace NCMod
                 _rotationVelocity = Vector3.zero;
                 _noiseTime = 0f;
                 _motionClass = ClassifyAircraft(aircraft);
-                _engines = FindEngines(aircraft);
                 _previousMach = GetMach(aircraft);
                 _sonicKick = 0f;
                 _initialized = true;
                 return;
             }
 
-            Vector3 worldAcceleration = (body.velocity - _previousVelocity) / dt;
-            Vector3 specificAcceleration = worldAcceleration - Physics.gravity;
-            Vector3 localG = aircraftTransform.InverseTransformDirection(specificAcceleration) / 9.80665f;
-            Vector3 dynamicG = localG - Vector3.up;
+            if (Time.timeScale <= 0f || !GameManager.flightControlsEnabled) return;
+            float physicsDt = Time.fixedTime - _lastPhysicsTime;
+            if (physicsDt > 0f)
+            {
+                Vector3 worldAcceleration = (body.velocity - _previousVelocity) / Mathf.Max(physicsDt, Time.fixedDeltaTime);
+                Vector3 specificAcceleration = worldAcceleration - Physics.gravity;
+                Vector3 localG = aircraftTransform.InverseTransformDirection(specificAcceleration) / 9.80665f;
+                localG.z = 0f;
+                Vector3 localJerk = (localG - _previousAcceleration) / Mathf.Max(physicsDt, Time.fixedDeltaTime);
+
+                _previousVelocity = body.velocity;
+                _previousAcceleration = localG;
+                _sampledG = localG;
+                _sampledImpulse = Mathf.Clamp01(localJerk.magnitude / 85f);
+                _lastPhysicsTime = Time.fixedTime;
+            }
+            Vector3 localGSample = _sampledG;
+            Vector3 dynamicG = localGSample - Vector3.up;
             Vector3 localAngularVelocity = aircraftTransform.InverseTransformDirection(body.angularVelocity);
-            Vector3 localJerk = (localG - _previousAcceleration) / dt;
-
-            _previousVelocity = body.velocity;
-            _previousAcceleration = localG;
-
             MotionProfile profile = GetMotionProfile(_motionClass);
-            float highG = Mathf.Clamp01((Mathf.Abs(localG.y) - 1.8f) / 4.7f);
+            float highG = Mathf.Clamp01((Mathf.Abs(localGSample.y) - 1.8f) / 4.7f);
             float maneuver = Mathf.Clamp01(dynamicG.magnitude / 2.25f);
-            float impulse = Mathf.Clamp01(localJerk.magnitude / 85f);
+            float impulse = _sampledImpulse;
             float positionStrength = Mathf.Clamp(NuclearOptionTrainer.Instance.PositionStrength.Value, 0f, 3f) *
                                      profile.Position * 0.45f;
             float rotationStrength = Mathf.Clamp(NuclearOptionTrainer.Instance.RotationStrength.Value, 0f, 3f) *
@@ -1122,7 +1283,7 @@ namespace NCMod
             float shakeStrength = Mathf.Clamp(NuclearOptionTrainer.Instance.ShakeStrength.Value, 0f, 3f);
 
             float mach = GetMach(aircraft);
-            if (_previousMach < 0.98f && mach >= 1.0f && Time.unscaledTime - _lastSonicCrossing > 3f)
+            if (_previousMach < 1.0f && mach >= 1.0f && Time.unscaledTime - _lastSonicCrossing > 3f)
             {
                 _sonicKick = Mathf.Clamp(NuclearOptionTrainer.Instance.SonicBoomShakeStrength.Value, 0f, 3f);
                 _lastSonicCrossing = Time.unscaledTime;
@@ -1133,13 +1294,13 @@ namespace NCMod
 
             // Local aircraft axes: x right, y up, z forward. The head lags opposite acceleration.
             Vector3 targetPosition = new Vector3(-dynamicG.x * 0.010f, -dynamicG.y * 0.0075f,
-                -dynamicG.z * 0.0065f) * positionStrength;
+                0f) * positionStrength;
             targetPosition += new Vector3(-localAngularVelocity.y, localAngularVelocity.z,
                 localAngularVelocity.x) * (0.005f * positionStrength);
             targetPosition.z -= _sonicKick * 0.018f;
 
-            Vector3 targetRotation = new Vector3(dynamicG.z * 0.85f - localAngularVelocity.x * 1.5f,
-                -dynamicG.x * 0.55f - localAngularVelocity.y * 1.1f,
+            Vector3 targetRotation = new Vector3(-localAngularVelocity.x * 1.5f,
+                -dynamicG.x * 0.25f + localAngularVelocity.y * 1.1f,
                 dynamicG.x * 1.15f - localAngularVelocity.z * 1.4f) * rotationStrength;
             targetRotation.x += _sonicKick * 1.8f;
 
@@ -1149,13 +1310,13 @@ namespace NCMod
             _rotationOffset = Vector3.SmoothDamp(_rotationOffset, targetRotation, ref _rotationVelocity,
                 smoothTime * 0.85f, 90f, dt);
 
-            float engineActivity = body.velocity.magnitude > 25f ? GetEngineActivity() : 0f;
-            float engineVibration = engineActivity * profile.EngineVibration;
+
             _noiseTime += dt * Mathf.Lerp(profile.NoiseFrequency, profile.NoiseFrequency * 1.65f,
                 Mathf.Max(highG, impulse));
             // Deliberately no constant base noise: stable flight and parked aircraft stay still.
-            float shakeAmplitude = (maneuver * 0.00028f + highG * 0.00105f + impulse * 0.00135f +
-                                    engineVibration + _sonicKick * 0.0032f) * shakeStrength * profile.Shake;
+            float transonic = Mathf.Clamp01(1f - Mathf.Abs(mach - 1f) / 0.16f);
+            float shakeAmplitude = (transonic * 0.0012f + maneuver * 0.00028f + highG * 0.00105f + impulse * 0.00135f +
+                                    _sonicKick * 0.0032f) * shakeStrength * profile.Shake;
             Vector3 positionNoise = new Vector3(
                 SignedNoise(_noiseTime, 0.0f),
                 SignedNoise(_noiseTime * 1.13f, 11.7f),
@@ -1172,7 +1333,10 @@ namespace NCMod
 
             // Applied after the game's own cockpit pose, preserving free-look, padlock and aiming.
             cameraTransform.localPosition += finalPosition;
-            cameraTransform.localRotation *= Quaternion.Euler(finalRotation);
+            _appliedRotation = Quaternion.Euler(finalRotation);
+            _appliedPosition = finalPosition;
+            _appliedTransform = cameraTransform;
+            cameraTransform.localRotation *= _appliedRotation;
         }
 
         private static float SignedNoise(float x, float seed)
@@ -1182,12 +1346,12 @@ namespace NCMod
 
         private static AirframeMotionClass ClassifyAircraft(Aircraft aircraft)
         {
-            if (aircraft.GetComponentsInChildren<RotorShaft>(true).Length > 0)
+            if (aircraft.GetComponentInChildren<RotorShaft>(true) != null)
             {
                 return AirframeMotionClass.Rotorcraft;
             }
-            if (aircraft.GetComponentsInChildren<ConstantSpeedProp>(true).Length > 0 ||
-                aircraft.GetComponentsInChildren<PropFan>(true).Length > 0)
+            if (aircraft.GetComponentInChildren<ConstantSpeedProp>(true) != null ||
+                aircraft.GetComponentInChildren<PropFan>(true) != null)
             {
                 return AirframeMotionClass.Propeller;
             }
@@ -1199,48 +1363,9 @@ namespace NCMod
             return designedMaxSpeed > 360f ? AirframeMotionClass.Supersonic : AirframeMotionClass.Jet;
         }
 
-        private static IEngine[] FindEngines(Aircraft aircraft)
-        {
-            try
-            {
-                return aircraft.GetComponentsInChildren<MonoBehaviour>(true)
-                    .OfType<IEngine>()
-                    .ToArray();
-            }
-            catch
-            {
-                return new IEngine[0];
-            }
-        }
-
-        private static float GetEngineActivity()
-        {
-            if (_engines == null || _engines.Length == 0)
-            {
-                return 0f;
-            }
-
-            float total = 0f;
-            int valid = 0;
-            for (int i = 0; i < _engines.Length; i++)
-            {
-                try
-                {
-                    if (_engines[i] == null) continue;
-                    total += Mathf.Clamp01(_engines[i].GetRPMRatio());
-                    valid++;
-                }
-                catch
-                {
-                    // A damaged/detached engine can disappear between frames.
-                }
-            }
-            return valid == 0 ? 0f : total / valid;
-        }
-
         private static float GetMach(Aircraft aircraft)
         {
-            float speedOfSound = LevelInfo.GetSpeedOfSound(aircraft.transform.position.y);
+            float speedOfSound = LevelInfo.GetSpeedOfSound(aircraft.transform.position.y - Datum.origin.position.y);
             return speedOfSound > 1f ? aircraft.rb.velocity.magnitude / speedOfSound : 0f;
         }
 
@@ -1249,13 +1374,13 @@ namespace NCMod
             switch (motionClass)
             {
                 case AirframeMotionClass.Propeller:
-                    return new MotionProfile(0.62f, 0.68f, 0.65f, 21f, 0.00016f);
+                    return new MotionProfile(0.62f, 0.68f, 0.65f, 21f);
                 case AirframeMotionClass.Rotorcraft:
-                    return new MotionProfile(0.72f, 0.82f, 0.78f, 12f, 0.00028f);
+                    return new MotionProfile(0.72f, 0.82f, 0.78f, 12f);
                 case AirframeMotionClass.Supersonic:
-                    return new MotionProfile(0.92f, 0.82f, 0.82f, 17f, 0.000035f);
+                    return new MotionProfile(0.92f, 0.82f, 0.82f, 17f);
                 default:
-                    return new MotionProfile(0.78f, 0.72f, 0.68f, 15f, 0.000025f);
+                    return new MotionProfile(0.78f, 0.72f, 0.68f, 15f);
             }
         }
 
@@ -1265,16 +1390,13 @@ namespace NCMod
             public readonly float Rotation;
             public readonly float Shake;
             public readonly float NoiseFrequency;
-            public readonly float EngineVibration;
 
-            public MotionProfile(float position, float rotation, float shake, float noiseFrequency,
-                float engineVibration)
+            public MotionProfile(float position, float rotation, float shake, float noiseFrequency)
             {
                 Position = position;
                 Rotation = rotation;
                 Shake = shake;
                 NoiseFrequency = noiseFrequency;
-                EngineVibration = engineVibration;
             }
         }
 
@@ -1298,7 +1420,6 @@ namespace NCMod
             _noiseTime = 0f;
             _previousMach = 0f;
             _sonicKick = 0f;
-            _engines = new IEngine[0];
             _initialized = false;
         }
     }
