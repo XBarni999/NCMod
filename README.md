@@ -1,6 +1,6 @@
 # NCMod - Nuclear Option Trainer & Cockpit Physics
 
-Latest source update: **1.2.0 test build** (2026-10-06). In-game validation is pending; no new release has been published. See [CHANGELOG.md](CHANGELOG.md) and [Releases](https://github.com/XBarni999/NCMod/releases).
+Latest release: **1.2.0** (2026-10-06). See [CHANGELOG.md](CHANGELOG.md) and [Releases](https://github.com/XBarni999/NCMod/releases).
 
 [![Game Version](https://img.shields.io/badge/Nuclear%20Option-v0.34.x-blue?style=flat-square)](https://store.steampowered.com/app/2168680/Nuclear_Option/)
 [![BepInEx](https://img.shields.io/badge/BepInEx-5.x-green?style=flat-square)](https://github.com/BepInEx/BepInEx)
@@ -28,12 +28,12 @@ It introduces immersive G-force head movement, aerodynamic turbulence shake, son
 * On-screen combat log displaying vehicle component damage, weapon detachments, wing snaps, and engine fires.
 
 ### 4. Trainer & Cheats Menu (`Insert` / `F10`)
-The dark, draggable panel has Flight, Camera / HUD and Funds / Rank tabs, a 640 × 520 px default size, scrolling for small screens, and a cursor that unlocks while the menu is open.
+The dark, draggable panel has Flight, Camera / HUD and Funds / Rank tabs, a 640 x 520 px default size, scrolling for small screens, and a cursor that unlocks while the menu is open.
 
-Drag the title bar to move the window. Drag **◢** in its bottom-right corner to resize it; the chosen size is saved in the BepInEx config under `Menu.Width` / `Menu.Height`.
+Drag the resize grip in its bottom-right corner to resize it; the chosen size is saved in the BepInEx config under `Menu.Width` / `Menu.Height`.
 
 * **Air start**: Move your current aircraft into level flight at **500, 1000, 2000 or 5000 metres above local ground / sea level**. Keeps your airframe and loadout; requires single-player or host authority. Choose a height under **On next aircraft spawn** to apply automatically after entering each new aircraft, or choose **Off** (default).
-* **Airframe-aware speed**: Rotorcraft start at 40 m/s (144 km/h), propeller / propfan aircraft at 100 m/s (360 km/h), jets at 180 m/s (648 km/h). Fixed-wing speed is raised to at least 1.35 times the aircraft's takeoff / approach speed and capped at 80% of its design maximum. The aircraft is levelled, engines enabled, brakes released and gear retracted. These starting presets still need flight testing with heavy loads and at 5000 m.
+* **Airframe-aware speed**: Rotorcraft start at 40 m/s (144 km/h), propeller / propfan aircraft at 100 m/s (360 km/h), jets at 180 m/s (648 km/h). Fixed-wing speed is raised to at least 1.35 times the aircraft's takeoff / approach speed and capped at 80% of its design maximum. The aircraft is levelled, engines enabled, brakes released and gear retracted. Starting speed also depends on the aircraft configuration and load.
 
 * **Unlimited Ammo**: Instant weapon replenish for your aircraft.
   Guns, missile launchers, and mounted weapons are refilled on the local aircraft.
@@ -88,7 +88,7 @@ dotnet build NCMod.csproj -c Release
 
 ---
 
-## рџ“њ Credits
+## СЂСџвЂњСљ Credits
 
 Created by **XBarni999**.  
 Developed for **Nuclear Option** by Shockfront Studios.
