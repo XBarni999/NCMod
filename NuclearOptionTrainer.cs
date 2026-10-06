@@ -37,8 +37,12 @@ namespace NCMod
         internal static bool HideTargetMarkers;
 
         private Harmony _harmony;
-        private Rect _windowRect = new Rect(24f, 80f, 420f, 0f);
+        private Rect _windowRect = new Rect(24f, 80f, 640f, 520f);
         private int _rankTarget;
+        private ConfigEntry<float> _menuWidth;
+        private ConfigEntry<float> _menuHeight;
+        private Vector2 _resizeStartMouse;
+        private Vector2 _resizeStartSize;
         private int _menuTab;
         private Vector2 _menuScroll;
         private ConfigEntry<int> _spawnAltitude;
@@ -83,6 +87,10 @@ namespace NCMod
         private void Awake()
         {
             Instance = this;
+            _menuWidth = Config.Bind("Menu", "Width", 640f, "Trainer window width in pixels; also adjustable by dragging its bottom-right corner.");
+            _menuHeight = Config.Bind("Menu", "Height", 520f, "Trainer window height in pixels; also adjustable by dragging its bottom-right corner.");
+            _windowRect.width = _menuWidth.Value;
+            _windowRect.height = _menuHeight.Value;
             _spawnAltitude = Config.Bind("AirStart", "Altitude", 0,
                 "Automatic air start after entering a new aircraft: 0 off, or 500/1000/2000/5000 metres above local terrain.");
             LogSource = Logger;
@@ -197,10 +205,14 @@ namespace NCMod
 
             if (_menuVisible)
             {
+                HandleWindowResize();
+                _windowRect.width = Mathf.Clamp(_windowRect.width, Mathf.Min(440f, Screen.width), Mathf.Max(1f, Screen.width));
+                _windowRect.height = Mathf.Clamp(_windowRect.height, Mathf.Min(320f, Screen.height), Mathf.Max(1f, Screen.height));
                 _windowRect = GUILayout.Window(WindowId, _windowRect, DrawWindow,
-                    "NCMod • Nuclear Option 0.34", _windowStyle, GUILayout.Width(420f));
+                    "NCMod • Nuclear Option 0.34", _windowStyle,
+                    GUILayout.Width(_windowRect.width), GUILayout.Height(_windowRect.height));
                 _windowRect.x = Mathf.Clamp(_windowRect.x, 0f, Mathf.Max(0f, Screen.width - _windowRect.width));
-                _windowRect.y = Mathf.Clamp(_windowRect.y, 0f, Mathf.Max(0f, Screen.height - 40f));
+                _windowRect.y = Mathf.Clamp(_windowRect.y, 0f, Mathf.Max(0f, Screen.height - _windowRect.height));
             }
 
             if (DamageFeed && _hudHideMode != HudHideMode.CleanScreen)
@@ -209,11 +221,42 @@ namespace NCMod
             }
         }
 
+        private void HandleWindowResize()
+        {
+            int control = GUIUtility.GetControlID(WindowId + 1, FocusType.Passive);
+            Event evt = Event.current;
+            Rect grip = new Rect(_windowRect.xMax - 28f, _windowRect.yMax - 28f, 28f, 28f);
+            if (evt.type == EventType.MouseDown && evt.button == 0 && grip.Contains(evt.mousePosition))
+            {
+                GUIUtility.hotControl = control;
+                _resizeStartMouse = evt.mousePosition;
+                _resizeStartSize = _windowRect.size;
+                evt.Use();
+            }
+            else if (GUIUtility.hotControl == control)
+            {
+                if (evt.type == EventType.MouseDrag)
+                {
+                    Vector2 size = _resizeStartSize + evt.mousePosition - _resizeStartMouse;
+                    _windowRect.width = Mathf.Clamp(size.x, Mathf.Min(440f, Screen.width), Mathf.Max(1f, Screen.width - _windowRect.x));
+                    _windowRect.height = Mathf.Clamp(size.y, Mathf.Min(320f, Screen.height), Mathf.Max(1f, Screen.height - _windowRect.y));
+                    evt.Use();
+                }
+                else if (evt.type == EventType.MouseUp && evt.button == 0)
+                {
+                    GUIUtility.hotControl = 0;
+                    _menuWidth.Value = _windowRect.width;
+                    _menuHeight.Value = _windowRect.height;
+                    evt.Use();
+                }
+            }
+        }
+
         private void DrawWindow(int id)
         {
             GUILayout.Label("N C M O D   /   " + PluginVersion, _headerStyle);
             _menuTab = GUILayout.Toolbar(_menuTab, MenuTabs, GUILayout.Height(30f));
-            _menuScroll = GUILayout.BeginScrollView(_menuScroll, GUILayout.MaxHeight(Mathf.Max(160f, Screen.height - 180f)));
+            _menuScroll = GUILayout.BeginScrollView(_menuScroll, GUILayout.Height(Mathf.Max(100f, _windowRect.height - 150f)), GUILayout.ExpandWidth(true));
             if (_menuTab == 2)
             {
                 GUILayout.Space(8f);
@@ -316,7 +359,8 @@ namespace NCMod
                                 _markersToggleKey.Value + " markers", _smallStyle);
             }
 
-            GUI.DragWindow(new Rect(0f, 0f, 10000f, 24f));
+            GUI.Label(new Rect(_windowRect.width - 26f, _windowRect.height - 26f, 24f, 24f), "◢", _headerStyle);
+            GUI.DragWindow(new Rect(0f, 0f, _windowRect.width, 28f));
         }
 
         private void AirStart(int altitude)
