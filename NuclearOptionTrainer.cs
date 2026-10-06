@@ -47,6 +47,10 @@ namespace NCMod
         private Vector2 _menuScroll;
         private ConfigEntry<int> _spawnAltitude;
         private int _lastSpawnAircraft;
+        private Aircraft _pendingAirStartAircraft;
+        private int _pendingAirStartHeight;
+        private readonly Dictionary<Rigidbody, RigidbodyInterpolation> _airStartInterpolation =
+            new Dictionary<Rigidbody, RigidbodyInterpolation>();
         private float _spawnReadyAt;
         private Texture2D _panelTexture;
         private static readonly string[] MenuTabs = { "Flight", "Camera / HUD", "Funds / Rank" };
@@ -146,6 +150,9 @@ namespace NCMod
         private void OnDestroy()
         {
             CursorManager.SetFlag(MenuCursorFlag, false);
+            foreach (var entry in _airStartInterpolation)
+                if (entry.Key != null) entry.Key.interpolation = entry.Value;
+            _airStartInterpolation.Clear();
             SetHudHideMode(HudHideMode.Visible);
             if (_panelTexture != null) Destroy(_panelTexture);
             if (_harmony != null)
@@ -363,7 +370,37 @@ namespace NCMod
             GUI.DragWindow(new Rect(0f, 0f, _windowRect.width, 28f));
         }
 
+        private void FixedUpdate()
+        {
+            // Restore interpolation only after the relocated assembly has simulated once.
+            foreach (var entry in _airStartInterpolation)
+                if (entry.Key != null) entry.Key.interpolation = entry.Value;
+            _airStartInterpolation.Clear();
+            if (_pendingAirStartAircraft == null) return;
+            Aircraft requested = _pendingAirStartAircraft;
+            int altitude = _pendingAirStartHeight;
+            _pendingAirStartAircraft = null;
+            Aircraft current;
+            if (!GameManager.GetLocalAircraft(out current) || current != requested) return;
+            try { ExecuteAirStart(altitude); }
+            catch (Exception ex)
+            {
+                ShowStatus("Air start failed; see BepInEx log.");
+                Logger.LogError(ex);
+            }
+        }
+
         private void AirStart(int altitude)
+        {
+            Player player;
+            if (!TryGetAuthoritativePlayer(out player)) return;
+            Aircraft aircraft;
+            if (!GameManager.GetLocalAircraft(out aircraft) || aircraft == null) return;
+            _pendingAirStartAircraft = aircraft;
+            _pendingAirStartHeight = altitude;
+        }
+
+        private void ExecuteAirStart(int altitude)
         {
             Player player;
             if (!TryGetAuthoritativePlayer(out player)) return;
@@ -386,15 +423,36 @@ namespace NCMod
                 speed = Mathf.Max(speed, Mathf.Max(parameters.takeoffSpeed, parameters.approachSpeed) * 1.35f);
             if (parameters != null && parameters.maxSpeed > 1f)
                 speed = Mathf.Min(speed, parameters.maxSpeed * 0.8f);
+            // AeroPart.CreateRB unparents jointed parts. Transform children alone are incomplete.
+            var bodySet = new HashSet<Rigidbody> { aircraft.rb };
+            foreach (UnitPart part in aircraft.partLookup)
+            {
+                if (part == null || part.parentUnit != aircraft || part.IsDetached()) continue;
+                if (part.rb != null) bodySet.Add(part.rb);
+                foreach (Rigidbody child in part.GetComponentsInChildren<Rigidbody>(true))
+                    bodySet.Add(child);
+            }
+            foreach (Rigidbody child in aircraft.GetComponentsInChildren<Rigidbody>(true))
+                bodySet.Add(child);
+            // Do not stretch a joint to a different unit, e.g. an externally slung load.
+            foreach (Rigidbody body in bodySet)
+                foreach (Joint joint in body.GetComponents<Joint>())
+                    if (joint.connectedBody != null && !bodySet.Contains(joint.connectedBody))
+                    { ShowStatus("Release the externally connected load before air start."); return; }
+
             Quaternion rotation = Quaternion.LookRotation(forward, Vector3.up);
-            Quaternion delta = rotation * Quaternion.Inverse(aircraft.transform.rotation);
-            Rigidbody[] bodies = aircraft.GetComponentsInChildren<Rigidbody>(true);
+            Vector3 origin = aircraft.rb.position;
+            Quaternion delta = rotation * Quaternion.Inverse(aircraft.rb.rotation);
+            Rigidbody[] bodies = bodySet.ToArray();
             Vector3[] positions = new Vector3[bodies.Length];
             Quaternion[] rotations = new Quaternion[bodies.Length];
+            // Snapshot every body's physics pose before moving any transform.
             for (int i = 0; i < bodies.Length; i++)
             {
-                positions[i] = target + delta * (bodies[i].position - aircraft.transform.position);
+                positions[i] = target + delta * (bodies[i].position - origin);
                 rotations[i] = delta * bodies[i].rotation;
+                _airStartInterpolation.Add(bodies[i], bodies[i].interpolation);
+                bodies[i].interpolation = RigidbodyInterpolation.None;
             }
             aircraft.transform.SetPositionAndRotation(target, rotation);
             for (int i = 0; i < bodies.Length; i++)
@@ -402,6 +460,7 @@ namespace NCMod
                 bodies[i].position = positions[i]; bodies[i].rotation = rotations[i];
                 bodies[i].velocity = forward * speed; bodies[i].angularVelocity = Vector3.zero;
             }
+            Logger.LogInfo("Air start relocated " + bodies.Length + " bodies from " + aircraft.partLookup.Count + " registered parts.");
             aircraft.GetInputs().throttle = rotor ? 0.65f : 0.75f;
             aircraft.NetworkIgnition = true;
             aircraft.GetInputs().brake = 0f;
