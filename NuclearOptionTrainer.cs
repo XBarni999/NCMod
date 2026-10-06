@@ -465,7 +465,19 @@ namespace NCMod
             aircraft.NetworkIgnition = true;
             aircraft.GetInputs().brake = 0f;
             aircraft.SetGear(false);
-            aircraft.velocityPrev = Vector3.zero;
+            // Pilot_OnAeroInputsApplied has its own velocity history and inflicts
+            // lethal damage above 20 G. A teleport changes the baseline, not acceleration.
+            aircraft.velocityPrev = forward * speed;
+            aircraft.accel = Vector3.zero;
+            aircraft.gForce = 0f;
+            if (aircraft.pilots != null)
+                foreach (Pilot pilot in aircraft.pilots)
+                {
+                    if (pilot == null || pilot.dead || pilot.ejected) continue;
+                    pilot.velocityPrev = forward * speed;
+                    pilot.accel = Vector3.zero;
+                    pilot.gForce = 0f;
+                }
             Physics.SyncTransforms();
             aircraft.CheckRadarAlt();
             CockpitHeadMotion.Reset();
